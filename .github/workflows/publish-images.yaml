@@ -72,9 +72,15 @@ jobs:
           echo smoke > smoke.txt
           curl -sSf -F file=@smoke.txt http://127.0.0.1:8080/api/upload | grep -q '"filename"'
 
-          echo "--- ni l'API ni Postgres ne sont publies"
-          test "$(docker inspect tp1-api  --format '{{json .NetworkSettings.Ports}}')" = '{"3000/tcp":null}'
-          test "$(docker inspect tp1-db   --format '{{json .NetworkSettings.Ports}}')" = '{"5432/tcp":null}'
+          echo "--- ni l'API, ni Postgres, ni Mailpit ne sont publies"
+          for c in tp1-api tp1-db tp1-mailer; do
+            bound=$(docker inspect "$c" \
+              --format '{{range $p, $conf := .NetworkSettings.Ports}}{{if $conf}}{{$p}} {{end}}{{end}}')
+            if [ -n "$bound" ]; then
+              echo "::error::$c publie un port sur l'hote : $bound"
+              exit 1
+            fi
+          done
 
       - name: Logs en cas d'echec
         if: failure()
