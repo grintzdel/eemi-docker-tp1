@@ -1,0 +1,26 @@
+services:
+  db:
+    ports:
+      - "127.0.0.1:${DB_PORT:-5432}:5432"
+
+  mailer:
+    ports:
+      - "127.0.0.1:${MAILPIT_PORT:-8025}:8025"
+      - "127.0.0.1:${SMTP_PORT:-1025}:1025"
+
+  api:
+    build:
+      target: dev
+    ports:
+      - "127.0.0.1:${API_PORT:-3000}:3000"
+    volumes:
+      - ./api/src:/app/api/src
+
+  front:
+    build:
+      target: dev
+    env_file: front/.env
+    ports:
+      - "127.0.0.1:${FRONT_PORT:-5173}:5173"
+    volumes:
+      - ./front/src:/app/front/src

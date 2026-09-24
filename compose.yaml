@@ -1,0 +1,72 @@
+name: tp1
+
+services:
+  db:
+    image: ${REGISTRY:-ghcr.io}/${IMAGE_NAMESPACE:-local}/tp1-db:${IMAGE_TAG:-dev}
+    build:
+      context: ./db
+    container_name: tp1-db
+    env_file: db/.env
+    networks: [internal]
+    volumes:
+      - pgdata:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  mailer:
+    image: ${REGISTRY:-ghcr.io}/${IMAGE_NAMESPACE:-local}/tp1-mailer:${IMAGE_TAG:-dev}
+    build:
+      context: ./mailer
+    container_name: tp1-mailer
+    networks: [internal]
+
+  api:
+    image: ${REGISTRY:-ghcr.io}/${IMAGE_NAMESPACE:-local}/tp1-api:${IMAGE_TAG:-dev}
+    build:
+      context: ./api
+    container_name: tp1-api
+    env_file: api/.env
+    networks: [edge, internal]
+    volumes:
+      - uploads:/app/api/uploads
+    depends_on:
+      db:
+        condition: service_healthy
+      mailer:
+        condition: service_started
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:3000/uploads').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 40s
+
+  front:
+    image: ${REGISTRY:-ghcr.io}/${IMAGE_NAMESPACE:-local}/tp1-front:${IMAGE_TAG:-dev}
+    build:
+      context: ./front
+    container_name: tp1-front
+    networks: [edge]
+    depends_on:
+      api:
+        condition: service_started
+
+networks:
+  edge:
+    driver: bridge
+  internal:
+    driver: bridge
+
+volumes:
+  pgdata:
+    name: tp1-pgdata
+  uploads:
+    name: tp1-uploads

@@ -1,0 +1,41 @@
+# Prod : `docker compose -f compose.yaml -f compose.prod.yaml up -d`
+# Le -f explicite exclut compose.override.yaml, donc aucun bind mount ni port de dev.
+# Seul le 80 du front est publie : l'API, Postgres et Mailpit restent sur les
+# reseaux internes.
+#
+# Le tag par defaut est `prod` et non `dev` : les deux environnements ne produisent
+# pas le meme contenu, ils ne doivent pas partager un tag. En CI, fixer IMAGE_TAG
+# au SHA du commit ou a la version.
+services:
+  db:
+    image: ${REGISTRY:-ghcr.io}/${IMAGE_NAMESPACE:-local}/tp1-db:${IMAGE_TAG:-prod}
+    restart: unless-stopped
+
+  mailer:
+    image: ${REGISTRY:-ghcr.io}/${IMAGE_NAMESPACE:-local}/tp1-mailer:${IMAGE_TAG:-prod}
+    restart: unless-stopped
+
+  api:
+    image: ${REGISTRY:-ghcr.io}/${IMAGE_NAMESPACE:-local}/tp1-api:${IMAGE_TAG:-prod}
+    build:
+      target: prod
+    restart: unless-stopped
+
+  front:
+    image: ${REGISTRY:-ghcr.io}/${IMAGE_NAMESPACE:-local}/tp1-front:${IMAGE_TAG:-prod}
+    build:
+      target: prod
+      args:
+        VITE_API_URL: /api
+    restart: unless-stopped
+    ports:
+      - "${HTTP_PORT:-80}:8080"
+    depends_on:
+      api:
+        condition: service_healthy
+
+networks:
+  # Coupe le NAT sortant : db et mailer n'ont aucune route vers l'exterieur.
+  # L'API garde la sienne, elle est aussi sur edge.
+  internal:
+    internal: true
