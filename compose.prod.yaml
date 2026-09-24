@@ -1,11 +1,3 @@
-# Prod : `docker compose -f compose.yaml -f compose.prod.yaml up -d`
-# Le -f explicite exclut compose.override.yaml, donc aucun bind mount ni port de dev.
-# Seul le 80 du front est publie : l'API, Postgres et Mailpit restent sur les
-# reseaux internes.
-#
-# Le tag par defaut est `prod` et non `dev` : les deux environnements ne produisent
-# pas le meme contenu, ils ne doivent pas partager un tag. En CI, fixer IMAGE_TAG
-# au SHA du commit ou a la version.
 services:
   db:
     image: ${REGISTRY:-ghcr.io}/${IMAGE_NAMESPACE:-local}/tp1-db:${IMAGE_TAG:-prod}

@@ -82,13 +82,28 @@ image: ${REGISTRY:-ghcr.io}/${IMAGE_NAMESPACE:-local}/tp1-api:${IMAGE_TAG:-dev}
 `docker compose pull` fonctionne en deploiement. `IMAGE_TAG` est **volontairement non
 defini** dans `.env` : le defaut depend du fichier compose (`dev` pour l'override,
 `prod` pour la prod), pour que les deux environnements ne se marchent jamais dessus
-sous un tag commun. En CI on le fixe :
+sous un tag commun.
+
+**Publication.** `.github/workflows/publish-images.yaml` se declenche sur tout tag
+`v*` (ou a la main via *workflow_dispatch*) :
 
 ```bash
-IMAGE_TAG=${GITHUB_SHA::7} IMAGE_NAMESPACE=<user> \
-  docker compose -f compose.yaml -f compose.prod.yaml build
-docker compose -f compose.yaml -f compose.prod.yaml push
+git tag v1.0.0 && git push --tags
+# -> ghcr.io/grintzdel/tp1-{api,front,db,mailer}:v1.0.0  (+ :latest)
 ```
+
+L'ordre des etapes est **build -> smoke test -> push** : le workflow demarre la stack
+prod et verifie que nginx sert la page, que `/api` atteint Postgres, que l'upload
+fonctionne en non-root et que ni l'API ni la db ne sont publiees. Une image qui echoue
+a ces controles n'est jamais poussee.
+
+Les `env_file` de `compose.yaml` etant gitignores, le workflow les regenere depuis les
+`.env.example` : sans eux `docker compose config` echoue sur un clone frais.
+
+> Les images sont construites pour l'architecture du runner, donc **linux/amd64**.
+> Sur un Mac Apple Silicon, un `docker compose pull` les fera tourner en emulation.
+> Passer en multi-arch demande un build separe du smoke test (une image
+> multi-plateforme ne peut pas etre chargee dans le daemon local).
 
 **Reseaux.** Deux bridges. `edge` porte front ↔ api ; `internal` porte api ↔ db et
 api ↔ mailer. Postgres et Mailpit ne sont que sur `internal`, l'API est sur les deux.

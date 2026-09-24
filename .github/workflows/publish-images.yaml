@@ -1,0 +1,106 @@
+name: Publier les images
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag d'image a publier (ex. v1.0.0 ou un SHA court)"
+        required: true
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    env:
+      REGISTRY: ghcr.io
+      COMPOSE: -f compose.yaml -f compose.prod.yaml
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: docker/setup-buildx-action@v4
+
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # GHCR n'accepte que des namespaces en minuscules.
+      - name: Resoudre namespace et tag
+        run: |
+          owner='${{ github.repository_owner }}'
+          echo "IMAGE_NAMESPACE=${owner,,}" >> "$GITHUB_ENV"
+          echo "IMAGE_TAG=${{ inputs.tag || github.ref_name }}" >> "$GITHUB_ENV"
+
+      # Les env_file de compose.yaml sont gitignores : sans eux `compose config`
+      # echoue sur le runner. Les valeurs ne servent qu'au smoke test.
+      - name: Generer les .env depuis les .env.example
+        run: |
+          cp .env.example .env
+          for d in api db front; do cp "$d/.env.example" "$d/.env"; done
+
+      - name: Verifier la config et les noms d'images
+        run: |
+          docker compose $COMPOSE config -q
+          docker compose $COMPOSE config --images
+
+      - name: Build des stages prod
+        run: docker compose $COMPOSE build
+
+      # On ne publie pas une image qu'on n'a pas vue tourner.
+      - name: Smoke test de la stack prod
+        env:
+          HTTP_PORT: 8080
+        run: |
+          docker compose $COMPOSE up -d
+          curl -sS --retry 45 --retry-delay 2 --retry-all-errors \
+            -o /dev/null http://127.0.0.1:8080/api/uploads
+
+          echo "--- la page est servie par nginx"
+          curl -sSf -o /dev/null http://127.0.0.1:8080/
+
+          echo "--- /api est proxifie vers l'API, qui lit Postgres"
+          curl -sSf http://127.0.0.1:8080/api/ | grep -q '"visits"'
+
+          echo "--- l'upload ecrit dans le volume (conteneur non-root)"
+          echo smoke > smoke.txt
+          curl -sSf -F file=@smoke.txt http://127.0.0.1:8080/api/upload | grep -q '"filename"'
+
+          echo "--- ni l'API ni Postgres ne sont publies"
+          test "$(docker inspect tp1-api  --format '{{json .NetworkSettings.Ports}}')" = '{"3000/tcp":null}'
+          test "$(docker inspect tp1-db   --format '{{json .NetworkSettings.Ports}}')" = '{"5432/tcp":null}'
+
+      - name: Logs en cas d'echec
+        if: failure()
+        run: docker compose $COMPOSE logs --tail 60
+
+      - name: Arreter la stack
+        if: always()
+        run: docker compose $COMPOSE down -v
+
+      - name: Push des images
+        run: docker compose $COMPOSE push
+
+      - name: Taguer aussi latest
+        run: |
+          for svc in api front db mailer; do
+            src="$REGISTRY/$IMAGE_NAMESPACE/tp1-$svc:$IMAGE_TAG"
+            docker tag "$src" "$REGISTRY/$IMAGE_NAMESPACE/tp1-$svc:latest"
+            docker push "$REGISTRY/$IMAGE_NAMESPACE/tp1-$svc:latest"
+          done
+
+      - name: Recapitulatif
+        run: |
+          {
+            echo "### Images publiees"
+            echo
+            for svc in api front db mailer; do
+              echo "- \`$REGISTRY/$IMAGE_NAMESPACE/tp1-$svc:$IMAGE_TAG\`"
+            done
+          } >> "$GITHUB_STEP_SUMMARY"
